@@ -1,0 +1,444 @@
+---
+title: "Trabajo Final de Estadistica y Econometria Espacial"
+author: "Wilson Guallasamin"
+date: "2024-09-08"
+format: docx
+editor: visual
+---
+
+# Actividad Propuesta: Análisis Espacial de Amenidades de
+
+Salud en Parroquias de Ecuador
+
+**OBJETIVO :** Esta actividad te permitirá aplicar y reforzar conceptos clave en el análisis espacial, enfocándote en la relación entre las amenidades de salud y la población a nivel de parroquias en Ecuador. A través de esta práctica, tendrás la oportunidad de trabajar con diferentes fuentes de datos, realizar cálculos de indicadores relevantes, y reflexionar sobre la calidad y precisión de las fuentes de información geográfica. Además, te ayudará a comprender cómo los datos espaciales pueden integrarse y analizarse para obtener insights significativos que apoyen la toma de decisiones.
+
+**INTRODUCCION:**
+
+Para este analisis usaremos la provincia de Guayas . Guayas es una de las veinticuatro provincias que conforman la República del Ecuador, localizada en la región litoral del país, al suroeste del mismo. Su capital es la ciudad de Guayaquil. La provincia es el mayor centro comercial, económico e Industrial de Ecuador. Con sus 4'391.923 millones de habitantes, Guayas es la provincia más poblada del país y contiene el 25,93 % de la población de la república. Guayas se encuentra dividida políticamente en veinticinco cantones, de los cuales se derivan cincuenta parroquias urbanas y veintinueve parroquias rurales. Las actividades principales de la provincia son la industria, ya que se encuentra el puerto y las mayores fábricas en Guayaquil; el sector agropecuario en la vida rural, y el turismo, principalmente por sus famosas playas y festividades montubias.
+
+```{r, message=FALSE}
+# Instalar y cargar los paquetes necesarios # install.packages(c("sf", "tidyverse", "osmdata","spdep","cowplot)) 
+library(sf) 
+library(tidyverse) 
+library(osmdata) 
+library(spdep) 
+library(cowplot)
+library(lattice)
+library(readxl)
+setwd('C:/Users/WELCOME/Documents/Curso/Curso Geoestadistica/Examen Final')
+```
+
+# Parte 1: Identificación y Reflexión sobre las Amenidades de Salud
+
+Para el analisis que vamos hacer, nos basamos en las herramientas de *"OpenStreetMaps"* usando *Boundary Box* e identificar las amenidades sobre la provincia del Guayas.
+
+```{r, message=FALSE}
+  bbox<- getbb("Guayas, Ecuador") 
+  
+  osm_query <- opq(bbox) %>% 
+    add_osm_feature(key = "amenity", value = "hospital") %>% 
+    osmdata_sf()
+    
+  puntos<- osm_query$osm_points 
+```
+
+Cargamos el mapa del Ecuador y ubicamos los puntos antes encontrados sobre este mapa para tener una visualizacion general de los hospitales.
+
+```{r, message=FALSE}
+# Cargar y preparar los datos de zonas censales
+zonas_nacional <- st_read("C:/Users/WELCOME/Documents/Curso/Curso Geoestadistica/Examen Final/Data/GEODATABASE_NACIONAL_2021/GEODATABASE_NACIONAL_2021.gdb/", layer = "zon_a")
+
+zonas <- zonas_nacional %>% filter(str_detect(zon, "^09"))
+```
+
+Ubicamos sobre el mapa, los puntos de los hospitales de la provincia del Guayas para tener un vista previa de la distribución.
+
+```{r, echo=FALSE, fig.height=8, fig.dpi = 300}
+ggplot()+
+  geom_sf(data = zonas)+
+  geom_sf(data = puntos)+
+  labs(title = "Distribución de hospitales en la Provincia del Guayas",
+       caption = "Fuente:OpenStreetMaps")+
+    theme_minimal()+
+    theme(plot.title = element_text(hjust = 0.5,size=15))
+```
+
+Vemos gran cantidad de concentración en la ciudad de Guayaquil. Aun asi, tenemos cierta concentración sobre algunas de las ciudades importantes de la provincia
+
+# Parte 2: Unión de Polígonos de Zonas Censales a Nivel de Parroquias
+
+Leemos la información sobre el resultado censal realizado en el año 2022.
+
+```{r, message=FALSE}
+pob_nacional <- read_excel("C:/Users/WELCOME/Documents/Curso/Curso Geoestadistica/Examen Final//Data/01_2022_CPV_Estructura_poblacional.xlsx", sheet = "1.2", range = "B10:G1299")
+
+names(pob_nacional) <- c("provincia", "canton", "parroquia", "total_nacional",
+                          "hombres", "mujeres")
+
+```
+
+Como podemos notas, tenemos que realizar un fitltrado para quedarnos con la provincia del Guayas y ademas ir eliminando columnas innecesarias que forman parte del archivo resumen obtenido del INEC.
+
+```{r, message=FALSE}
+pob_nacional <- pob_nacional %>% filter(!is.na(provincia),
+                         str_detect(parroquia, "^Total|Nacional", negate = T)) 
+
+pob_nacional <- pob_nacional %>% 
+  mutate(across(c(provincia, canton, parroquia), str_to_upper))
+```
+
+Leemos el acrhvio de codificaciones de las todas las provincias del pasìs, la cual es realizada por el INEC y unimos esta infromación la base de datos censal obtenido en el paso anterior.
+
+```{r, message = FALSE}
+dpa_nacional <- read_excel("C:/Users/WELCOME/Documents/Curso/Curso Geoestadistica/Examen Final//Data/CODIFICACIÓN_2022.xlsx", sheet = "CODIGOS")
+pob_nacional <- pob_nacional %>% left_join(dpa_nacional, by = c("provincia" = "DPA_DESPRO",
+                                        "canton" = "DPA_DESCAN",
+                                        "parroquia" = "DPA_DESPAR"))
+```
+
+Las zonas obtenidas en la Actividad 1, modificamos la base para poder hacer join con la data censal. Ademas de esto,unimos las parroquias en un shape unico por parroquia
+
+```{r, message = FALSE}
+zonas <- zonas %>% 
+  mutate(DPA_PARROQ = str_sub(zon, 1, 6))
+
+parroquias <- zonas %>% group_by(DPA_PARROQ) %>%
+  summarise(Shape = st_union(Shape))
+
+parroquias <- parroquias %>% left_join(pob_nacional)
+
+```
+
+# Parte 3: Cálculo del Número Total de Amenidades
+
+Vamos este punto, usaremos un mapa de calor , el cual nos ayude a identificar la densidad poblacional de la provincia . Esto lo hacemos con la función ggplot y además , dado que tenemos una distribucìon muy desigual, usamos la función logaritmos para poder tener una visualizacion mucho mas visual.
+
+```{r, message = FALSE, fig.height=8, fig.dpi = 300}
+parroquias %>% ggplot()+
+  geom_sf(aes(fill = log(total_nacional)))+
+  geom_sf(data = puntos)+
+  scale_fill_gradient(low = "yellow", high = "brown")+
+  labs(title = "Densidad Poblacional de la Provincia del Guayas",
+       caption = "Fuente: INEC",
+       fill ='Logaritmo de # de Hab.')+
+  theme(plot.title = element_text(hjust = 0.5,size=15))
+
+```
+
+La mayor cantidad de hospitales se encuentra en Guayaquil, la cual la podemos identificar por el color mas oscuro. Ademas , cerca al cantón Guayaquil identificamos 3 parroquias mas las cuales también , sacando la ciudad capital, tambien presentan alta concentración de hospitales. Estas parroquias son Eloy Alfaro, Milagro y Samborondón
+
+# Parte 4: Cálculo del Ratio de Amenidades por Habitante
+
+En este punto vamos a calcular el ratio del número de amenidades seleccionadas en relación con el número de habitantes por cada 100 habitantes en cada parroquia de la provincia del Guayas. Para esto calculamos primero el número de hospitales por cada parroquia.
+
+```{r, message = FALSE}
+puntos <- st_transform(x = puntos, crs = st_crs(parroquias))
+parroquias_puntos <- st_join(x = puntos, y = parroquias, join = st_within)
+parroquias_puntos <- parroquias_puntos %>% count(DPA_PARROQ, name = "hospitales")  %>% as_tibble()
+parroquias <- parroquias %>% left_join(parroquias_puntos)
+parroquias <- parroquias %>% mutate(hospitales = replace_na(hospitales, 0))
+
+```
+
+Y vemos un resumen de lop 5 parroquias con mas número de hospitales de la provincia, siendo Guayaquil la que mayor concentración tiene, seguido de Milagro, Eloy Alfaro ,Samborondón y Daule
+
+```{r}
+resumen<-parroquias %>% select(parroquia,hospitales) %>% arrange(desc(hospitales)) %>% as.data.frame()
+head(resumen %>% select(-Shape),5) 
+```
+
+Una vez , calculado este valor, procedemos al cálculo del indicador mencionado.
+
+```{r}
+parroquias <- parroquias %>% mutate(ratio = (hospitales/total_nacional)*1000)
+resumen_2<-parroquias %>% select(parroquia,ratio) %>% arrange(desc(ratio)) %>% as.data.frame() %>% head(5)
+
+resumen_3<-parroquias %>% filter(ratio!=0) %>%select(parroquia,ratio) %>% arrange(ratio) %>% as.data.frame() %>% head(5)
+
+resumen_4<-parroquias %>% filter(ratio==0)
+```
+
+A continuacion vemos las 5 mejores parroquias con respecto al indicador.
+
+```{r}
+resumen_2 %>%select(-Shape)
+
+```
+
+Además podemos indicar que existen 32 parroquias que no tienen ningun hospital disponible,
+
+Y ahora vemos el top 5 de las peores parroquias con respecto a este indicador, sacando todas las parroquias que no tienen ningún hospital.
+
+```{r}
+resumen_3  %>%select(-Shape)
+```
+
+Las parroquias que apreciamos sin color en donde no existe presencia de hospitales. Esto explica porque hay algunas parroquias tienen alto valor de indicador ya que la población de estas parroquias deben trasladarse a otras parroquias para poder ser atendidos.
+
+```{r, message = FALSE, fig.height=8, fig.dpi = 300}
+parroquias %>% ggplot()+
+  geom_sf(aes(fill = log(ratio)))+
+  scale_fill_gradient(low = "yellow", high = "brown")+
+  labs(title = "Indicador de Amenidades de Salud por cada 1000 habitantes",
+       caption = "Fuente: INEC",fill ='Logaritmo del Ratio',
+  fill ='Logaritmo de Numero de Pob.')+
+    theme(plot.title = element_text(hjust = 0.5,size=15))
+```
+
+# Parte 5: Cálculo del Índice de Moran para el Indicador de Amenidades de
+
+Salud
+
+En este punto vamos a calcular el Índice de Moran para el indicador de número de amenidades de salud por cada 100 habitantes en las parroquias de una provincia. Este índice nos permitirá evaluar si existe autocorrelación espacial en la distribución de las amenidades de salud, lo cual es clave para entender la distribución y concentración de estos servicios en diferentes áreas.
+
+Calculo de la matriz de Vecindad binaria:
+
+```{r, message = FALSE}
+vecinos <- poly2nb(parroquias, queen = T)
+vecinos_pesos <- nb2listw(vecinos, style = "W")
+matriz <- listw2mat(vecinos_pesos)
+
+```
+
+Cálculo de Matriz de Pesos Espaciales de Contigüidad:
+
+```{r, message = FALSE, fig.height=6, fig.dpi = 300}
+levelplot(t(matriz[1:50,1:50]),
+          scales = list(y = list(at = seq(10, 50, by = 10),
+                                 labels = seq(10, 50, by = 10))),
+          main = "Matriz de Pesos Espaciales Basada en Contigüidad")
+
+```
+
+Cálculo del Indice de Morán:
+
+```{r, message = FALSE}
+moran <- moran.test(parroquias$hospitales, vecinos_pesos, alternative = "two.sided")
+
+moran
+
+```
+
+De acuerdo al Índice de Moran, no existe autocorrelación espacial entre el número de hospitales dentro de la provincia de Guayas al tener un p-valor de 0.6686; el cual es superior al de 0.05.
+
+Cálculo del indice local de Moran y composición de clusteres:
+
+```{r, message = FALSE,warning=FALSE}
+local_moran<- localmoran(parroquias$hospitales, listw = vecinos_pesos)
+
+#head(local_moran)
+
+clusters <- attributes(local_moran)$quadr
+parroquias <- bind_cols(parroquias, clusters)
+local_moran <- local_moran %>% as.tibble()
+
+parroquias <- parroquias %>% bind_cols(local_moran)
+```
+
+### 1. Mapa del Número Promedio de Hospitales
+
+```{r, message = FALSE, fig.height=8, fig.dpi = 300}
+ parroquias %>% 
+  ggplot() + 
+  geom_sf(aes(fill = hospitales)) +
+  scale_fill_viridis_c(option = "A") + labs(title='Numero de Hospitales',fill='# de Hospitales')+
+    theme(plot.title = element_text(hjust = 0.5,size=15))
+```
+
+### 2. Mapa del Índice de Moran Local
+
+```{r, message = FALSE, fig.height=6, fig.dpi = 300}
+ parroquias %>% 
+  ggplot() + 
+  geom_sf(aes(fill = as.numeric(Ii))) +
+  scale_fill_viridis_c(option = "B")+
+     labs(title = "Indice de Moran",fill='')+
+    theme(plot.title = element_text(hjust = 0.5,size=15))
+
+```
+
+### 3. Mapa de Significancia del Índice de Moran Local
+
+```{r}
+parroquias %>% 
+  mutate(Z.Ii = as.numeric(Z.Ii),
+         Z.Ii = cut(Z.Ii, breaks = c(-Inf, -1.65, 1.65, Inf), labels = c("ACS Negativa", "Sin ACS", "ACS Positiva"))) %>% 
+  ggplot() + 
+  geom_sf(aes(fill = Z.Ii)) +
+  scale_fill_viridis_d(option = "G")+labs(title='Mapa de Significancia',fill='Niveles')+
+    theme(plot.title = element_text(hjust = 0.5,size=15))
+```
+
+Dentro de la provincia, se puede ver que casi en su totalidad no poseen autocorrelación; mientras que la parroquia Guayaquil, Eloy Alfaro, Samborondon y Daule tiene autocorrelación positiva y sus parroquias aledañas tienen autocorrelación negativa.
+
+### 4. Clústers
+
+```{r}
+parroquias %>% 
+  mutate(mean = if_else(between(as.numeric(Z.Ii), -1.65, 1.65),"No significant",mean)) %>% 
+  ggplot() + 
+  geom_sf(aes(fill = mean)) +
+  scale_fill_viridis_d(option = "G")+labs(title='Clusters',fill='Niveles')+
+    theme(plot.title = element_text(hjust = 0.5,size=15))
+```
+
+En la parroquia de Guayaquil existen clusteres de relación Alta- Baja. Existen 5 cantones que son relacion Alta- Alta. 6 cantones relación Baja- Alta y los demás parroquias sin significancia estadìstica.
+
+# 
+
+# Parte 6: Actividad opcional, Análisis de Buffers y Reflexión sobre los Límites de OpenStreetMap
+
+### 1. Crear un Buffer alrededor del Polígono de Diners Club
+
+Ubicamos nuestra zona en la provincia de Pichincha, parroquia Iñaquito
+
+```{r, message = FALSE, fig.height=6, fig.dpi = 300}
+
+zonas <- st_read("C:/Users/WELCOME/Documents/Curso/Curso Geoestadistica/Examen Final/Data/GEODATABASE_NACIONAL_2021/GEODATABASE_NACIONAL_2021.gdb/", 
+                 layer = "zon_a")
+
+dmq_zonas <- zonas %>% filter(str_detect(zon, "^170150"))
+
+# Crear un objeto de ejemplo 
+zoom_to <- "170150192"
+
+poli <- dmq_zonas %>% filter(zon == zoom_to)
+
+# Crear un buffer de 500 m alrededor del polígono
+buffer <- st_buffer(poli, dist = 500)
+
+class(buffer$Shape)
+
+
+# Definir los límites del mapa para el zoom
+lon_bounds <- c(-78.480, -78.500)  # Ajustar según sea necesario
+lat_bounds <- c(-0.17, -0.15)
+
+
+# Transformar las coordenadas de las zonas para la visualización
+dmq_4326 <- st_transform(dmq_zonas, crs = 4326)
+
+# Mostrar el buffer en un mapa
+
+class(poli$Shape)
+
+ggplot() +
+  geom_sf(data = dmq_4326, color = "blue", size = 1) +
+  geom_sf(data = buffer, fill = "grey", alpha = 0.5) +
+  theme_minimal() +
+  ggtitle("Buffer de 1 km alrededor del Polígono de Diners Club") +
+  coord_sf(xlim = lon_bounds, ylim = lat_bounds)+
+    theme(plot.title = element_text(hjust = 0.5,size=15))
+```
+
+### 2. Aplicar el Buffer al Centroide del Polígono
+
+Aplicaremos el buffer al centroide del polígono en lugar de al polígono completo.
+
+```{r}
+# Calcular el centroide del polígono de Diners Club
+centroid <- st_centroid(poli)
+
+# Crear un buffer de 1 km alrededor del centroide
+buffer_centroid <- st_buffer(centroid, dist = 500)
+
+class(centroid$Shape)
+
+# Mostrar el buffer del centroide en un mapa
+ggplot() +
+  geom_sf(data = dmq_4326, color = "blue", size = 1) +
+  geom_sf(data = buffer_centroid, fill = "grey", alpha = 0.5) +
+  theme_minimal() +
+  ggtitle("Buffer de 1 km alrededor del Centroide de Diners Club") +
+  coord_sf(xlim = lon_bounds, ylim = lat_bounds)+
+    theme(plot.title = element_text(hjust = 0.5,size=15))
+```
+
+### 3. Buscar Hospitales dentro de los Buffers
+
+Ahora vamos a identificar las zonas que contienen tanto restaurantes como hospitales dentro de los buffers de 500 metros.
+
+```{r,warning=FALSE}
+
+library(osmdata)
+
+bbox <- getbb("Quito, Ecuador")
+
+hospitales <- opq(bbox = bbox) %>% 
+  add_osm_feature(key = "amenity",value = "hospital") %>% 
+  osmdata_sf()
+
+hospital_points <- hospitales$osm_points
+
+# Transformar las coordenadas de los puntos al mismo CRS que `dmq_zonas`
+hospitals_points <- st_transform(hospital_points, crs = st_crs(dmq_zonas))
+
+# Crear buffers de 1 km alrededor de cada zona censal
+dmq_zonas_buffers <- st_buffer(st_centroid(dmq_zonas), dist = 500)
+
+# Identificar zonas con hospitales en el buffer
+zones_with_hospitals <- st_join(hospitals_points, dmq_zonas_buffers, 
+                                join = st_within)
+
+```
+
+### 4. Crear Listas de IDs que Tienen Ambas Amenidades
+
+Creamos listas que identifican las zonas que tienen un hospital dentro del buffer.
+
+```{r}
+amenidades <- list(hospitales = zones_with_hospitals) %>%
+  map(~.x %>% as_tibble() %>% distinct(zon))
+
+ambos <- amenidades %>%
+  reduce(inner_join, by = "zon")
+
+amenidades <- append(amenidades, list(ambos = ambos))
+```
+
+### 5. Mostrar el Mapa Completo con Amenidades
+
+Mostramos un mapa completo que indica las zonas que tienen hospitales O ninguna amenidad.
+
+```{r}
+dmq_zonas <- dmq_zonas %>%
+  mutate(
+    amenidad = case_when(
+     zon %in% amenidades$hospitales$zon ~ "Hospitales",
+     TRUE ~ "Ninguna"
+    )
+  )
+
+dmq_zonas %>% 
+ggplot() +
+  geom_sf(aes(fill = amenidad)) +
+  theme_minimal() +
+  theme(legend.position = "bottom") +
+  labs(title = "Zonas censales con hospitales", fill = "Amenidad")+
+    theme(plot.title = element_text(hjust = 0.5,size=15))
+
+```
+
+### 6. Zoom sobre Diners Club y sus Amenidades
+
+Hacemos zoom sobre el polígono de Diners Club para mostrar cómo se ven las amenidades en esta zona específica.
+
+```{r}
+# Definir los límites del mapa para el zoom
+lon_bounds <- c(-78.480, -78.500)  # Ajustar según sea necesario
+lat_bounds <- c(-0.17, -0.15)
+
+# Transformar las coordenadas de las zonas para la visualización
+dmq <- st_transform(dmq_zonas, crs = 4326)
+
+buffer_poli_2 <- st_buffer(st_centroid(poli),dist = 500)
+
+# Mostrar el mapa con zoom sobre la Politécnica
+ggplot(dmq) +
+  geom_sf(aes(fill = amenidad)) +
+  geom_sf(data = buffer_poli_2, fill = "grey", alpha = 0.5) +
+  coord_sf(xlim = lon_bounds, ylim = lat_bounds) +
+  theme_minimal() +
+  ggtitle("Zoom sobre Diners Club y sus Amenidades")+labs(fill='Amenidad')+
+    theme(plot.title = element_text(hjust = 0.5,size=15))
+```
