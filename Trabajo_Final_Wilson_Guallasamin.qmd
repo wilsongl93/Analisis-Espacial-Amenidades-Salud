@@ -53,14 +53,14 @@ zonas <- zonas_nacional %>% filter(str_detect(zon, "^09"))
 
 Ubicamos sobre el mapa, los puntos de los hospitales de la provincia del Guayas para tener un vista previa de la distribución.
 
-```{r, echo=FALSE, fig.height=8, fig.dpi = 300}
+```{r, echo=FALSE, fig.height=6, fig.dpi = 200}
 ggplot()+
   geom_sf(data = zonas)+
   geom_sf(data = puntos)+
   labs(title = "Distribución de hospitales en la Provincia del Guayas",
        caption = "Fuente:OpenStreetMaps")+
     theme_minimal()+
-    theme(plot.title = element_text(hjust = 0.5,size=15))
+    theme(plot.title = element_text(hjust = 0.5,size=10))
 ```
 
 Vemos gran cantidad de concentración en la ciudad de Guayaquil. Aun asi, tenemos cierta concentración sobre algunas de las ciudades importantes de la provincia
@@ -113,7 +113,7 @@ parroquias <- parroquias %>% left_join(pob_nacional)
 
 Vamos este punto, usaremos un mapa de calor , el cual nos ayude a identificar la densidad poblacional de la provincia . Esto lo hacemos con la función ggplot y además , dado que tenemos una distribucìon muy desigual, usamos la función logaritmos para poder tener una visualizacion mucho mas visual.
 
-```{r, message = FALSE, fig.height=8, fig.dpi = 300}
+```{r, message = FALSE, fig.height=6, fig.dpi = 200}
 parroquias %>% ggplot()+
   geom_sf(aes(fill = log(total_nacional)))+
   geom_sf(data = puntos)+
@@ -121,7 +121,7 @@ parroquias %>% ggplot()+
   labs(title = "Densidad Poblacional de la Provincia del Guayas",
        caption = "Fuente: INEC",
        fill ='Logaritmo de # de Hab.')+
-  theme(plot.title = element_text(hjust = 0.5,size=15))
+  theme(plot.title = element_text(hjust = 0.5,size=10))
 
 ```
 
@@ -175,14 +175,14 @@ resumen_3  %>%select(-Shape)
 
 Las parroquias que apreciamos sin color en donde no existe presencia de hospitales. Esto explica porque hay algunas parroquias tienen alto valor de indicador ya que la población de estas parroquias deben trasladarse a otras parroquias para poder ser atendidos.
 
-```{r, message = FALSE, fig.height=8, fig.dpi = 300}
+```{r, message = FALSE, fig.height=6, fig.dpi = 200}
 parroquias %>% ggplot()+
   geom_sf(aes(fill = log(ratio)))+
   scale_fill_gradient(low = "yellow", high = "brown")+
   labs(title = "Indicador de Amenidades de Salud por cada 1000 habitantes",
        caption = "Fuente: INEC",fill ='Logaritmo del Ratio',
   fill ='Logaritmo de Numero de Pob.')+
-    theme(plot.title = element_text(hjust = 0.5,size=15))
+    theme(plot.title = element_text(hjust = 0.5,size=10))
 ```
 
 # Parte 5: Cálculo del Índice de Moran para el Indicador de Amenidades de
